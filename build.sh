@@ -20,31 +20,52 @@ echo "Python version:"
 python3 --version
 echo ""
 
-# Check if pip is installed
-if ! command -v pip3 &> /dev/null; then
-    echo "Error: pip3 is not installed"
-    exit 1
-fi
-
 echo "Cleaning previous builds..."
-rm -rf build dist __pycache__ src/__pycache__ src/*/__pycache__
+rm -rf build dist __pycache__ src/__pycache__ src/*/__pycache__ .venv
 echo "Clean complete."
 echo ""
 
-# Set up virtual environment to avoid PEP 668 externally-managed-environment error
-VENV_DIR=".venv"
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
+# On Linux/ARM (Raspberry Pi / Ubuntu ARM), install PyQt5 via apt to avoid source builds
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    echo "Checking system PyQt5 packages..."
+    MISSING_PKGS=()
+    for pkg in python3-pyqt5 python3-pyqt5.qtwebengine; do
+        if ! dpkg -l | grep -q "^ii.*$pkg "; then
+            MISSING_PKGS+=("$pkg")
+        fi
+    done
+
+    if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
+        echo "Installing missing system packages: ${MISSING_PKGS[*]}"
+        sudo apt-get install -y "${MISSING_PKGS[@]}"
+    else
+        echo "System PyQt5 packages already installed."
+    fi
+    echo ""
 fi
+
+# Set up virtual environment with system-site-packages so PyQt5 from apt is visible
+VENV_DIR=".venv"
+echo "Creating virtual environment (--system-site-packages)..."
+python3 -m venv --system-site-packages "$VENV_DIR"
 
 echo "Activating virtual environment..."
 source "$VENV_DIR/bin/activate"
 
-echo "Installing dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install pyinstaller
+echo "Upgrading pip..."
+pip install --upgrade pip --quiet
+
+echo "Installing non-Qt Python dependencies..."
+# Exclude PyQt5/PyQtWebEngine — provided by system apt packages on Linux
+pip install --prefer-binary \
+    markdown-it-py==3.0.0 \
+    mdit-py-plugins==0.4.0 \
+    pygments==2.17.2 \
+    "Pillow>=11.0.0" \
+    reportlab==4.0.4
+
+echo "Installing PyInstaller..."
+pip install --prefer-binary pyinstaller
 
 echo ""
 echo "Building executable with PyInstaller..."
