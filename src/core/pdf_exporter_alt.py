@@ -12,11 +12,18 @@ from html.parser import HTMLParser
 
 logger = logging.getLogger(__name__)
 
+# Matches runs of CJK (Chinese/Japanese/Korean) and related Unicode characters
+_CJK_RE = re.compile(
+    r'[\u2E80-\u2EFF\u2F00-\u2FDF\u3000-\u303F\u3040-\u309F\u30A0-\u30FF'
+    r'\u3100-\u312F\u3200-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF'
+    r'\uFE10-\uFE4F\uFF00-\uFFEF]+'
+)
+
 
 class HTMLToReportlabParser(HTMLParser):
     """將 HTML 解析為 reportlab 可用的元素"""
 
-    def __init__(self, mono_font='Courier'):
+    def __init__(self, mono_font='Courier', cjk_font=None):
         super().__init__()
         self.elements = []
         self.current_text = []
@@ -29,17 +36,32 @@ class HTMLToReportlabParser(HTMLParser):
         self.in_em = False
         self.list_items = []
         self.in_list = False
-        self.mono_font = mono_font  # 保存等寬字體名稱
+        self.mono_font = mono_font
+        self.cjk_font = cjk_font
 
     @staticmethod
     def _escape_xml(text):
-        """轉義 XML 特殊字符，但保留常見符號"""
-        # 只轉義真正的 XML 特殊字符
+        """轉義 XML 特殊字符"""
         text = text.replace('&', '&amp;')
         text = text.replace('<', '&lt;')
         text = text.replace('>', '&gt;')
-        # 不轉義 |、-、+、/、\ 等 ASCII 藝術字符
         return text
+
+    def _apply_fonts(self, text):
+        """轉義 XML 並將 CJK 字符包裝在 CJK 字體標籤中，其餘保持預設字體"""
+        text = self._escape_xml(text)
+        if not self.cjk_font:
+            return text
+        result = []
+        last = 0
+        for m in _CJK_RE.finditer(text):
+            if m.start() > last:
+                result.append(text[last:m.start()])
+            result.append(f'<font name="{self.cjk_font}">{m.group()}</font>')
+            last = m.end()
+        if last < len(text):
+            result.append(text[last:])
+        return ''.join(result)
 
     def handle_starttag(self, tag, attrs):
         if tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
@@ -104,17 +126,13 @@ class HTMLToReportlabParser(HTMLParser):
 
         # 處理特殊格式
         if self.in_strong:
-            # 轉義 XML 字符後再加粗
-            data = f'<b>{self._escape_xml(data)}</b>'
+            data = f'<b>{self._apply_fonts(data)}</b>'
         elif self.in_em:
-            # 轉義 XML 字符後再斜體
-            data = f'<i>{self._escape_xml(data)}</i>'
+            data = f'<i>{self._apply_fonts(data)}</i>'
         elif self.in_code:
-            # 代碼中的字符需要轉義，使用支持 Unicode 的等寬字體
             data = f'<font name="{self.mono_font}" color="darkred">{self._escape_xml(data)}</font>'
         elif not self.in_pre:
-            # 普通文本也需要轉義（但 pre 區塊不需要，因為會用 Preformatted）
-            data = self._escape_xml(data)
+            data = self._apply_fonts(data)
 
         self.current_text.append(data)
 
@@ -220,19 +238,48 @@ class PDFExporterAlt:
                 rightMargin=margin_right
             )
 
-            # 註冊支持 Unicode 的等寬字體
-            mono_font_name = 'Courier'  # 默認使用 Courier
+            # 搜尋可用的 CJK（中文）字體
+            CJK_FONT_CANDIDATES = [
+                '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+                '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+                '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+                '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+            ]
+            cjk_font_name = None
+            for candidate in CJK_FONT_CANDIDATES:
+                if os.path.exists(candidate):
+                    try:
+                        kwargs = {'subfontIndex': 0} if candidate.endswith('.ttc') else {}
+                        pdfmetrics.registerFont(TTFont('CJKFont', candidate, **kwargs))
+                        cjk_font_name = 'CJKFont'
+                        logger.info(f"已註冊 CJK 字體: {candidate}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"無法註冊 {candidate}: {e}")
+
+            if cjk_font_name is None:
+                logger.warning("未找到 CJK 字體，中文可能無法顯示")
+
+            # 主體字體使用 DejaVu Sans（Latin），CJK 字符透過 inline font tag 切換
+            body_font = 'Helvetica'
             try:
-                # 嘗試註冊 DejaVu Sans Mono（支持更多 Unicode 字符）
+                dejavu_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+                if os.path.exists(dejavu_path):
+                    pdfmetrics.registerFont(TTFont('DejaVuSans', dejavu_path))
+                    body_font = 'DejaVuSans'
+            except Exception as e:
+                logger.warning(f"無法註冊 DejaVu Sans: {e}")
+
+            # 等寬字體（代碼塊）
+            mono_font_name = 'Courier'
+            try:
                 dejavu_path = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
                 if os.path.exists(dejavu_path):
                     pdfmetrics.registerFont(TTFont('DejaVuSansMono', dejavu_path))
                     mono_font_name = 'DejaVuSansMono'
-                    logger.info("使用 DejaVu Sans Mono 字體（支援 Unicode 字符）")
-                else:
-                    logger.info("DejaVu Sans Mono 不可用，使用 Courier 字體")
             except Exception as e:
-                logger.warning(f"無法註冊 DejaVu Sans Mono 字體: {e}，使用 Courier")
+                logger.warning(f"無法註冊 DejaVu Sans Mono: {e}")
 
             # 獲取樣式
             styles = getSampleStyleSheet()
@@ -245,17 +292,19 @@ class PDFExporterAlt:
             styles.add(ParagraphStyle(
                 name='CustomH1',
                 parent=styles['Heading1'],
-                fontSize=base_font_size * 2,  # 2em
+                fontName=body_font,
+                fontSize=base_font_size * 2,
                 spaceAfter=16,
                 spaceBefore=24,
                 textColor='#000000'
             ))
 
-            # h2: 1.5em (移除 border-bottom)
+            # h2: 1.5em
             styles.add(ParagraphStyle(
                 name='CustomH2',
                 parent=styles['Heading2'],
-                fontSize=base_font_size * 1.5,  # 1.5em
+                fontName=body_font,
+                fontSize=base_font_size * 1.5,
                 spaceAfter=16,
                 spaceBefore=24,
                 textColor='#000000'
@@ -265,7 +314,8 @@ class PDFExporterAlt:
             styles.add(ParagraphStyle(
                 name='CustomH3',
                 parent=styles['Heading3'],
-                fontSize=base_font_size * 1.25,  # 1.25em
+                fontName=body_font,
+                fontSize=base_font_size * 1.25,
                 spaceAfter=16,
                 spaceBefore=24,
                 textColor='#000000'
@@ -275,7 +325,8 @@ class PDFExporterAlt:
             styles.add(ParagraphStyle(
                 name='CustomH4',
                 parent=styles['Heading4'],
-                fontSize=base_font_size,  # 1em
+                fontName=body_font,
+                fontSize=base_font_size,
                 spaceAfter=16,
                 spaceBefore=24,
                 textColor='#000000'
@@ -297,13 +348,15 @@ class PDFExporterAlt:
             ))
 
             # 正常段落樣式 - 增加行距以匹配MDViewer
+            styles['Normal'].fontName = body_font
             styles['Normal'].fontSize = base_font_size
             styles['Normal'].leading = base_font_size * 1.6  # line-height: 1.6
             styles['Normal'].spaceAfter = 6
+            styles['Normal'].wordWrap = 'CJK'
 
             # 解析 HTML 並構建文檔
             story = []
-            parser = HTMLToReportlabParser(mono_font=mono_font_name)
+            parser = HTMLToReportlabParser(mono_font=mono_font_name, cjk_font=cjk_font_name)
 
             # 清理 HTML
             clean_html = self._clean_html(html_content)
