@@ -1,0 +1,17 @@
+# 最小依赖 - 不包括 weasyprint (无需 libpango)
+# 使用此文件可以避免 libpango 安装问题
+PyQt5==5.15.9
+PyQt5-sip==12.13.0
+markdown-it-py==3.0.0
+mdit-py-plugins==0.4.0
+pygments==2.17.2
+Pillow==10.1.0
+pydantic==2.5.3
+
+# 可选: PDF 导出功能 (选择其中一个)
+# 选项 1: 使用 reportlab (推荐 - 不需要系统库)
+reportlab==4.0.4
+
+# 选项 2: 使用 pypdf + markdown2
+# pypdf==4.0.0
+# markdown2==2.4.9
