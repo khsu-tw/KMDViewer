@@ -1,22 +1,19 @@
-# MDViewer - 完全不使用 Pango 的依赖列表
-# 所有库都是纯 Python，无需系统库
+# MDViewer - 完全不使用 Pango 的依賴列表
+# 所有庫都是純 Python，無需系統庫
 
 # GUI 框架 (PyQt5 - 使用 Qt5，不使用 Pango)
 PyQt5==5.15.9
 PyQt5-sip==12.13.0
 
-# Markdown 处理 (纯 Python)
+# Markdown 處理 (純 Python)
 markdown-it-py==3.0.0
 mdit-py-plugins==0.4.0
 
-# 代码高亮 (纯 Python)
+# 程式碼高亮 (純 Python)
 pygments==2.17.2
 
-# PDF 导出 (纯 Python - 不使用 weasyprint/Pango)
+# PDF 匯出 (純 Python - 不使用 weasyprint/Pango)
 reportlab==4.0.4
 
-# 图像处理 (Pillow - 不依赖 Pango)
-Pillow==10.1.0
-
-# 数据验证
+# 資料驗證
 pydantic==2.5.3
